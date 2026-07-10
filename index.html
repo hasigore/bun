@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wolfenstein 3D Style Raycaster Sandbox</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #111;
+            color: #fff;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #canvas-container {
+            position: relative;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.7);
+        }
+        canvas {
+            display: block;
+            background: #000;
+        }
+        #instructions {
+            margin-top: 15px;
+            text-align: center;
+            font-size: 14px;
+            color: #aaa;
+        }
+        kbd {
+            background: #333;
+            border: 1px solid #555;
+            border-radius: 3px;
+            padding: 2px 6px;
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container">
+        <!-- We use a 640x400 display area, rendering 320 distinct columns -->
+        <canvas id="gameCanvas" width="640" height="400"></canvas>
+    </div>
+    
+    <div id="instructions">
+        Use <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or <kbd>Arrow Keys</kbd> to move and look around.
+    </div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const SCREEN_WIDTH = 320; // We render at 320 columns (retro resolution) scaled x2
+const SCREEN_HEIGHT = 400;
+const FOV = Math.PI / 3;   // 60-degree field of view
+const HALF_FOV = FOV / 2;
+
+// 1 = Wall, 0 = Empty Space
+// A simple 16x16 map enclosure with a couple of central pillars
+const MAP_SIZE = 16;
+const MAP = [
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,0,1,1,0,0,0,0,0,0,0,0,1,1,0,1],
+    [1,0,1,1,0,0,0,0,0,0,0,0,1,1,0,1],
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,0,0,0,0,0,1,1,1,1,0,0,0,0,0,1],
+    [1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1],
+    [1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1],
+    [1,0,0,0,0,0,1,1,1,1,0,0,0,0,0,1],
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,0,1,1,0,0,0,0,0,0,0,0,1,1,0,1],
+    [1,0,1,1,0,0,0,0,0,0,0,0,1,1,0,1],
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+];
+
+// Player state parameters
+let playerX = 3.5;    // Start inside grid square (3, 5)
+let playerY = 5.5;
+let playerAngle = 0.0; // Facing straight East
+
+// Keyboard control state
+const keys = { w: false, a: false, s: false, d: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+
+window.addEventListener('keydown', (e) => { if (e.key in keys) keys[e.key] = true; });
+window.addEventListener('keyup', (e) => { if (e.key in keys) keys[e.key] = false; });
+
+// Main game loop logic
+function update() {
+    const moveSpeed = 0.04;
+    const rotateSpeed = 0.03;
+
+    // Turn Left
+    if (keys.a || keys.ArrowLeft) playerAngle -= rotateSpeed;
+    // Turn Right
+    if (keys.d || keys.ArrowRight) playerAngle += rotateSpeed;
+
+    // Keep angle normalized between 0 and 2*PI
+    playerAngle = (playerAngle + Math.PI * 2) % (Math.PI * 2);
+
+    // Calculate forward movement vector components
+    let dx = Math.cos(playerAngle) * moveSpeed;
+    let dy = Math.sin(playerAngle) * moveSpeed;
+
+    // Move Forward (with basic collision checking against the map grid)
+    if (keys.w || keys.ArrowUp) {
+        if (MAP[Math.floor(playerY)][Math.floor(playerX + dx * 2)] === 0) playerX += dx;
+        if (MAP[Math.floor(playerY + dy * 2)][Math.floor(playerX)] === 0) playerY += dy;
+    }
+    // Move Backward
+    if (keys.s || keys.ArrowDown) {
+        if (MAP[Math.floor(playerY)][Math.floor(playerX - dx * 2)] === 0) playerX -= dx;
+        if (MAP[Math.floor(playerY - dy * 2)][Math.floor(playerX)] === 0) playerY -= dy;
+    }
+}
+
+function render() {
+    // Clear display background screen with split Ceilings (Dark Grey) and Floors (Brown)
+    ctx.fillStyle = '#222';
+    ctx.fillRect(0, 0, canvas.width, canvas.height / 2);
+    ctx.fillStyle = '#4a3b2c';
+    ctx.fillRect(0, canvas.height / 2, canvas.width, canvas.height / 2);
+
+    // OUTER LOOP: Traversing the screen pixel columns
+    for (let column = 0; column < SCREEN_WIDTH; column++) {
+        
+        // Calculate ray angle relative to player view angle across screen columns width
+        const rayAngle = playerAngle - HALF_FOV + (column / SCREEN_WIDTH) * FOV;
+        
+        const cosAngle = Math.cos(rayAngle);
+        const sinAngle = Math.sin(rayAngle);
+
+        // Track grid intersection variables
+        let distance = 0;
+        let hitWall = false;
+        let sideHit = 0; // Used to track vertical vs horizontal hits for shading
+
+        // Step vectors for DDA algorithm calculations
+        // How far along the ray do we travel to jump exactly 1 full grid line unit x or y
+        const deltaDistX = Math.abs(1 / cosAngle);
+        const deltaDistY = Math.abs(1 / sinAngle);
+
+        let mapX = Math.floor(playerX);
+        let mapY = Math.floor(playerY);
+
+        let stepX, stepY;
+        let sideDistX, sideDistY;
+
+        // Establish initial distance vector states to closest step boundaries
+        if (cosAngle < 0) {
+            stepX = -1;
+            sideDistX = (playerX - mapX) * deltaDistX;
+        } else {
+            stepX = 1;
+            sideDistX = (mapX + 1.0 - playerX) * deltaDistX;
+        }
+
+        if (sinAngle < 0) {
+            stepY = -1;
+            sideDistY = (playerY - mapY) * deltaDistY;
+        } else {
+            stepY = 1;
+            sideDistY = (mapY + 1.0 - playerY) * deltaDistY;
+        }
+
+        // INNER LOOP: Jumping through map squares to detect wall collisions
+        while (!hitWall) {
+            if (sideDistX < sideDistY) {
+                sideDistX += deltaDistX;
+                mapX += stepX;
+                sideHit = 0; // Vertical grid wall intersection line
+            } else {
+                sideDistY += deltaDistY;
+                mapY += stepY;
+                sideHit = 1; // Horizontal grid wall intersection line
+            }
+            
+            // Safety boundaries check
+            if (mapX < 0 || mapX >= MAP_SIZE || mapY < 0 || mapY >= MAP_SIZE) break;
+
+            // Check if grid coordinates map indices hold a solid wall value
+            if (MAP[mapY][mapX] > 0) {
+                hitWall = true;
+            }
+        }
+
+        // Calculate exact mathematical distance perpendicular to view plane (fixes fish-eye lens warp distortion effect)
+        if (sideHit === 0) {
+            distance = (mapX - playerX + (1 - stepX) / 2) / cosAngle;
+        } else {
+            distance = (mapY - playerY + (1 - stepY) / 2) / sinAngle;
+        }
+
+        // Prevent division by zero errors if player stands directly touching a wall grid border line
+        if (distance < 0.01) distance = 0.01;
+
+        // RENDER STEP: Map absolute distance metric parameter values to physical projected row pixel heights
+        const wallHeight = Math.min(SCREEN_HEIGHT, Math.floor(SCREEN_HEIGHT / distance));
+
+        // Carmack Shading Shortcut: Give vertical wall cuts a darker color shade profile than horizontal cuts
+        ctx.fillStyle = (sideHit === 1) ? '#3a7bc8' : '#26548b';
+
+        // Draw a double-pixel-wide column bar to fill the 640px wide physical HTML canvas target context area properly
+        ctx.fillRect(column * 2, (SCREEN_HEIGHT - wallHeight) / 2, 2, wallHeight);
+    }
+}
+
+// Seamless system execution ticks scheduler loop function
+function loop() {
+    update();
+    render();
+    requestAnimationFrame(loop);
+}
+
+// Initialize execution
+loop();
+</script>
+</body>
+</html>
